@@ -4,27 +4,6 @@ using JuMP
 using OrderedCollections
 
 
-sv = spzeros(3)
-
-"""
-    _mmdot(x, y)
-
-Compute the dot product of `x` and `y`, allowing for mismatches in the dimension.
-The missing entries of the shorter vector are assumed to be zero.
-"""
-function _mmdot(x, y)
-    lx = length(x)
-    ly = length(y)
-
-    if lx == ly
-        return LinearAlgebra.dot(x, y)
-    elseif lx < ly
-        return LinearAlgebra.dot(x, @view(y[1:lx]))
-    else
-        return LinearAlgebra.dot(@view(x[1:ly]), y)
-    end
-end
-
 """
     AffineVariableUpdate
 
@@ -179,6 +158,25 @@ function JuMP.add_constraint(
     end
 
     return constr
+end
+
+"""
+    _mmdot(x, y)
+
+Compute the dot product of `x` and `y`, allowing for mismatches in the dimension.
+The missing entries of the shorter vector are assumed to be zero.
+"""
+function _mmdot(x, y)
+    lx = length(x)
+    ly = length(y)
+
+    if lx == ly
+        return LinearAlgebra.dot(x, y)
+    elseif lx < ly
+        return LinearAlgebra.dot(x, @view(y[1:lx]))
+    else
+        return LinearAlgebra.dot(@view(x[1:ly]), y)
+    end
 end
 
 """
