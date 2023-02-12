@@ -60,6 +60,11 @@ struct ParamVarLink
     variable::VariableRef
 end
 
+mutable struct ParamData
+    value::Number
+    is_dirty::Bool
+end
+
 struct ParametricConstraint2{S} <: AbstractConstraint
     f::AffExpr
     s::S
@@ -67,6 +72,14 @@ struct ParametricConstraint2{S} <: AbstractConstraint
 end
 ParametricConstraint{S} = ParametricConstraint2
 
+function JuMP.build_constraint(
+    _error::Function,
+    f::JuMP.GenericAffExpr,
+    set::MOI.AbstractScalarSet,
+    ::Type{ParametricConstraint};
+)
+    return JuMP.build_constraint(_error, f, set)
+end
 
 function JuMP.build_constraint(
     _error::Function,
@@ -87,18 +100,18 @@ function JuMP.build_constraint(
             model = owner_model(vars.a)
         end
 
-        v_a = get(model.ext[:parameter], vars.a, nothing)
-        v_b = get(model.ext[:parameter], vars.b, nothing)
+        v_a = get(model.ext[:__parameters], vars.a, nothing)
+        v_b = get(model.ext[:__parameters], vars.b, nothing)
 
         if v_a !== nothing
             _x = @variable(model)
             @constraint(model, _x == coeff * vars.b)
-            affine.terms[_x] = v_a
+            affine.terms[_x] = v_a.value
             push!(parametric_variables, ParamVarLink(vars.a, _x))
         elseif v_b !== nothing
             _x = @variable(model)
             @constraint(model, _x == coeff * vars.a)
-            affine.terms[_x] = v_b
+            affine.terms[_x] = v_b.value
             push!(parametric_variables, ParamVarLink(vars.b, _x))
         else
             _error("no")
@@ -120,16 +133,17 @@ function JuMP.add_constraint(
         model,
         ScalarConstraint(con.f, con.s)
     )
-    model.ext[:links][constr] = con.links
+    model.ext[:__links][constr] = con.links
 
     return constr
 end
 
-function finalize_parameters(model)
-    be = backend(model)
-    for (constr, pvls) in _m.ext[:links]
-        for pvl in pvls
-            MOI.modify(be, constr.index, MOI.ScalarCoefficientChange(pvl.variable.index, _m.ext[:parameter][pvl.parameter]))
+function _finalize_parameters(model::JuMP.Model)
+    for (constr, pvls) in model.ext[:__links]
+        for i in eachindex(model.ext[:__links][constr])
+            !model.ext[:__parameters][pvls[i].parameter].is_dirty && continue
+            set_normalized_coefficient(constr, pvls[i].variable, model.ext[:__parameters][pvls[i].parameter].value)
+            # MOI.modify(be, constr.index, MOI.ScalarCoefficientChange(pvls[i].variable.index, model.ext[:__parameters][pvls[i].parameter].value))
         end
     end
     model.is_model_dirty = true
@@ -137,33 +151,56 @@ function finalize_parameters(model)
     return optimize!(model; ignore_optimize_hook = true)
 end
 
-function parameter(model, value::Float64; fix::Bool=true)
-    _v = @variable(model)
-    model.ext[:parameter][_v] = value
-    fix && fix(_v, value; force=true)
-    return _v
-end
+# function parameter(model, value::Float64; fix::Bool=true)
+#     _v = @variable(model)
+#     model.ext[:__parameters][_v] = value
+#     fix && fix(_v, value; force=true)
+#     return _v
+# end
 
 macro pconstraint(args...)
     return esc(:($JuMP.@constraint($(args...), ParametricConstraint)))
 end
 
 macro parameter(args...)
+    _error(str...) = JuMP._macro_error(:parameter, args, __source__, str...)
+
     args = JuMP._reorder_parameters(args)
     flat_args, kw_args, _ = JuMP.Containers._extract_kw_args(args)
     kw_args = Dict(kw.args[1] => kw.args[2] for kw in kw_args)
 
+    if !(length(flat_args) in [2, 3])
+        _error("Wrong number of arguments. Did you miss the initial parameter value?")
+    end
+    if !(flat_args[end] isa Number)
+        _error("Wrong arguments. Did you miss the initial parameter value?")
+    end
+    _vector_scalar_get(_scalar::Number, ::Int64) = _scalar
+    _vector_scalar_get(_vector::Vector{T} where T<:Number, i::Int64) = _vector[i]
+
     if get(kw_args, :fix, true)
         return esc(quote
             _var = $JuMP.@variable($(flat_args[1:(end-1)]...))
-            $(flat_args[1]).ext[:parameter][_var] = $(flat_args[end])
-            $JuMP.fix(_var, $(flat_args[end]); force=true)
+            if _var isa Vector
+                for i in eachindex(_var)
+                    $(flat_args[1]).ext[:__parameters][_var[i]] = ParamData($_vector_scalar_get($(flat_args[end]), i), false)
+                end
+            else
+                $(flat_args[1]).ext[:__parameters][_var] = ParamData($(flat_args[end]), false)
+                $JuMP.fix(_var, $(flat_args[end]); force=true)
+            end
             _var
         end)
     else
         return esc(quote
             _var = $JuMP.@variable($(flat_args[1:(end-1)]...))
-            $(flat_args[1]).ext[:parameter][_var] = $(flat_args[end])
+            if _var isa Vector
+                for i in eachindex(_var)
+                    $(flat_args[1]).ext[:__parameters][_var[i]] = ParamData($_vector_scalar_get($(flat_args[end]), i), false)
+                end
+            else
+                $(flat_args[1]).ext[:__parameters][_var] = ParamData($(flat_args[end]), false)
+            end
             _var
         end)
     end
@@ -171,52 +208,69 @@ end
 
 function _set_value(parameter::VariableRef, value::Float64; fix::Bool=true)
     model = owner_model(parameter)
-    if !haskey(model.ext[:parameter], parameter)
+    if !haskey(model.ext[:__parameters], parameter)
         error("nope!")
     end
 
-    model.ext[:parameter][parameter] = value
+    model.ext[:__parameters][parameter].value = value
+    model.ext[:__parameters][parameter].is_dirty = true
     fix && JuMP.fix(parameter, value; force=true)
     return nothing
 end
 JuMP.set_value(parameter::VariableRef, value::Float64; fix::Bool=true) = _set_value(parameter, value; fix=fix)
 
+function enable_parameters!(model::JuMP.Model)
+    haskey(model, :__parameters) && return nothing
+
+    set_optimize_hook(model, _finalize_parameters)
+    model.ext[:__parameters] = Dict{VariableRef, ParamData}()
+    model.ext[:__links] = Dict{ConstraintRef, Vector{ParamVarLink}}()
+    return nothing
+end
+
 _m = Model(HiGHS.Optimizer)
-set_optimize_hook(_m, finalize_parameters)
+enable_parameters!(_m)
 
-_m.ext[:parameter] = Dict{VariableRef, Float64}()
-_m.ext[:links] = Dict{ConstraintRef, Vector{ParamVarLink}}()
+_x = @variable(_m, [1:2])
+_p = @parameter(_m, [1:2], 1.0; fix=false)
+# _c = @pconstraint(_m, _p .* _x .>= 1)
+_c = @pconstraint(_m, [i=1:2], _p[i] * _x[i] >= 1.0)
 
-_x = @variable(_m)
-_p = @parameter(_m, 1.0; fix=false)
-_c = @pconstraint(_m, _p * _x >= 1)
-
-@objective(_m, Min, _x + 0)
+@objective(_m, Min, sum(_x))
 optimize!(_m)
 
-_m.ext[:links]
+_m.ext[:__links]
 print(_m)
 
-_m.ext[:parameter][_p] = 0.0
+_m.ext[:__parameters][_p] = 0.0
 optimize!(_m)
 
 
 
 
-function build_and_pass(N::Int64, opt)
+function build_and_pass(N::Int64, opt; direct=false, parametric=true)
     @info "Build model"
     @time begin
-        model = Model(opt)
-        set_optimize_hook(model, finalize_parameters)
-        model.ext[:parameter] = Dict{VariableRef, Float64}()
-        model.ext[:links] = Dict{ConstraintRef, Vector{ParamVarLink}}()
+        if direct
+            model = direct_model(opt())
+        else
+            model = Model(opt)
+        end
         set_silent(model)
         set_string_names_on_creation(model, false)
-        x = [@variable(model) for i in 1:N]
+        set_time_limit_sec(model, 1e6)
 
-        p = [@parameter(model, 1.0; fix=false) for i in 1:N]
-        c = [@pconstraint(model, p[i] * x[i] >= 1) for i in 1:N]
-        # c = [@constraint(model, x[i] >= 1) for i in 1:N]
+        enable_parameters!(model)
+
+        @variable(model, x[i=1:N])
+        if parametric
+            p = @parameter(model, [i=1:N], 1.5; fix=false)
+            c = @pconstraint(model, [i=1:N], p[i] * x[i] >= 1)
+        else
+            c = @constraint(model, [i=1:N], 1.5 * x[i] >= 1)
+        end
+
+        # @constraint(model, [i=1:N], x[i] >= 1. / i)
 
         @objective(model, Min, sum(x))
     end
@@ -226,7 +280,11 @@ function build_and_pass(N::Int64, opt)
     end
     @info "Update"
     @time begin
-        set_value.(p, 2.0; fix=false)
+        if parametric
+            set_value.(p, 2.0; fix=false)
+        else
+            set_normalized_coefficient.(c, x, 2.0)
+        end
     end
     @info "Re-optimize"
     @time optimize!(model)
@@ -235,6 +293,15 @@ function build_and_pass(N::Int64, opt)
 end
 
 @time build_and_pass(1, HiGHS.Optimizer);
+@time build_and_pass(1, HiGHS.Optimizer; parametric=false);
+@time build_and_pass(1, HiGHS.Optimizer; direct=true);
 
 GC.gc()
-@time build_and_pass(50_000, HiGHS.Optimizer);
+@time build_and_pass(50_000, HiGHS.Optimizer; direct=true, parametric=false);
+GC.gc()
+@time build_and_pass(50_000, HiGHS.Optimizer; direct=true);
+
+
+using ProfileView
+ProfileView.@profview build_and_pass(50_000, HiGHS.Optimizer);
+
