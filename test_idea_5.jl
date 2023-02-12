@@ -72,3 +72,32 @@ GC.gc()
 
 using ProfileView
 ProfileView.@profview build_and_pass(50_000, Gurobi.Optimizer())
+
+# results:
+
+# Set parameter Username
+# Academic license - for non-commercial use only - expires 2024-01-31
+# [ Info: Build model
+#   0.261020 seconds (3.25 M allocations: 247.814 MiB, 18.56% gc time)
+# [ Info: First optimize
+#   0.075495 seconds (499.53 k allocations: 20.211 MiB)
+# [ Info: Update
+#   0.053459 seconds (200.02 k allocations: 4.960 MiB, 80.48% gc time)
+# [ Info: Re-optimize
+#   0.075812 seconds (549.51 k allocations: 21.737 MiB)
+# [ Info: Total
+#   0.467971 seconds (4.50 M allocations: 294.749 MiB, 19.54% gc time)
+
+
+# Set parameter Username
+# Academic license - for non-commercial use only - expires 2024-01-31
+# [ Info: Build model
+#   0.134581 seconds (1.15 M allocations: 80.642 MiB)
+# [ Info: First optimize
+#   0.038892 seconds (34 allocations: 1.047 KiB)
+# [ Info: Update
+#   0.014043 seconds (100.01 k allocations: 2.671 MiB)
+# [ Info: Re-optimize
+#   0.028353 seconds (21 allocations: 656 bytes)
+# [ Info: Total
+#   0.218298 seconds (1.25 M allocations: 83.340 MiB)
