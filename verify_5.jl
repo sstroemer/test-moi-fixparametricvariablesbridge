@@ -17,8 +17,8 @@ print(c)
 reduced_cost(q)
 
 set_value(p[2], 0.0; fix=false)
-# model.ext[:__parameters][p[2]].value = 0.0
-print(c1)
+print(c)
 
 optimize!(model)
-print(c1)
+print(c)
+reduced_cost(q)
