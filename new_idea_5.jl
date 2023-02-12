@@ -28,8 +28,8 @@ end
 Update = Update1
 
 struct UpdateLink3
-    constraint_index::ConstraintRef#MOI.ConstraintIndex
-    variable_index::VariableRef#MOI.VariableIndex
+    constraint_index::ConstraintRef
+    variable_index::VariableRef
     update::Update
 end
 UpdateLink = UpdateLink3
@@ -37,7 +37,7 @@ UpdateLink = UpdateLink3
 struct ParametricConstraint6{S} <: AbstractConstraint
     f::AffExpr
     s::S
-    temporal_update_links::Dict{VariableRef, Update}#Vector{Tuple}
+    temporal_update_links::Dict{VariableRef, Update}
 end
 ParametricConstraint{S} = ParametricConstraint6{S}
 
@@ -69,6 +69,7 @@ function JuMP.build_constraint(
     n_param = 0  
 
     updates = Dict{VariableRef, Update}()
+    sizehint!(updates, length(terms))
     for (vars, coeff) in terms
         if isnothing(model)
             model = owner_model(vars.a)
@@ -80,20 +81,18 @@ function JuMP.build_constraint(
 
         if v_a !== nothing
             if !haskey(updates, vars.b)
-                aff = get(affine.terms, vars.b, 0.0)
-                updates[vars.b] = Update(aff, spzeros(n_param))
+                updates[vars.b] = Update(get(affine.terms, vars.b, 0.0), spzeros(n_param))
             end
 
             updates[vars.b].params[v_a.index] += coeff
         elseif v_b !== nothing
             if !haskey(updates, vars.a)
-                aff = get(affine.terms, vars.a, 0.0)
-                updates[vars.a] = Update(aff, spzeros(n_param))
+                updates[vars.a] = Update(get(affine.terms, vars.a, 0.0), spzeros(n_param))
             end
 
             updates[vars.a].params[v_b.index] += coeff
         else
-            _error("no")
+            _error("At least one parameter is not properly registered.")
         end
     end
 
@@ -171,7 +170,6 @@ end
 macro pconstraint(args...)
     return esc(:($JuMP.@constraint($(args...), ParametricConstraint)))
 end
-
 
 macro parameter(args...)
     _error(str...) = JuMP._macro_error(:parameter, args, __source__, str...)

@@ -1,23 +1,6 @@
 include("new_idea_5.jl")
 
 
-_m = Model(HiGHS.Optimizer)
-enable_parameters!(_m)
-
-_x = @variable(_m)
-
-_p = @variable(_m)
-push!(_m.ext[:__parameter_values], 1.0)
-_m.ext[:__parameters][_p] = ParamData(0x01)
-
-_c = @constraint(_m, [i=1:50000], 2 * _p * _x >= 1, ParametricConstraint)
-
-@objective(_m, Min, sum(_x))
-
-set_optimize_hook(_m, _finalize_parameters)
-optimize!(_m)
-
-
 function build_and_pass(N::Int64, opt)
     @info "Build model"
     @time begin
