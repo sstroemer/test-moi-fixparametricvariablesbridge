@@ -1,3 +1,5 @@
+import HiGHS
+import Gurobi
 include("new_idea_5.jl")
 
 # ======= 1 =========
