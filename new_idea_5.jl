@@ -152,3 +152,68 @@ function enable_parameters!(model::JuMP.Model)
     return nothing
 end
 
+function _set_value(parameter::VariableRef, value::Float64; fix::Bool=true)
+    model = owner_model(parameter)
+    if !haskey(model.ext[:__parameters], parameter)
+        error("nope!")
+    end
+
+    model.ext[:__parameters][parameter].value = value
+    fix && JuMP.fix(parameter, value; force=true)
+    return nothing
+end
+JuMP.set_value(parameter::VariableRef, value::Float64; fix::Bool=true) = _set_value(parameter, value; fix=fix)
+
+macro pexpression(args...)
+    return esc(:($JuMP.QuadExpr.($JuMP.@expression($(args...)))))
+end
+
+macro pconstraint(args...)
+    return esc(:($JuMP.@constraint($(args...), ParametricConstraint)))
+end
+
+
+macro parameter(args...)
+    _error(str...) = JuMP._macro_error(:parameter, args, __source__, str...)
+
+    args = JuMP._reorder_parameters(args)
+    flat_args, kw_args, _ = JuMP.Containers._extract_kw_args(args)
+    kw_args = Dict(kw.args[1] => kw.args[2] for kw in kw_args)
+
+    if !(length(flat_args) in [2, 3])
+        _error("Wrong number of arguments. Did you miss the initial parameter value?")
+    end
+    # if !(flat_args[end] isa Number) and !(flat_args[end] isa Vector)
+    #     _error("Wrong arguments. Did you miss the initial parameter value?")
+    # end
+    _vector_scalar_get(_scalar::Number, ::Int64) = _scalar
+    _vector_scalar_get(_vector::Vector{T} where T<:Number, i::Int64) = _vector[i]
+
+    if get(kw_args, :fix, true)
+        return esc(quote
+            _var = $JuMP.@variable($(flat_args[1:(end-1)]...))
+            if _var isa Vector
+                for i in eachindex(_var)
+                    $(flat_args[1]).ext[:__parameters][_var[i]] = ParamData(UInt64(length($(flat_args[1]).ext[:__parameters]) + 1), $_vector_scalar_get($(flat_args[end]), i))
+                end
+            else
+                $(flat_args[1]).ext[:__parameters][_var] = ParamData(UInt64(length($(flat_args[1]).ext[:__parameters]) + 1), $(flat_args[end]))
+                $JuMP.fix(_var, $(flat_args[end]); force=true)
+            end
+            _var
+        end)
+    else
+        return esc(quote
+            _var = $JuMP.@variable($(flat_args[1:(end-1)]...))
+            if _var isa Vector
+                for i in eachindex(_var)
+                    $(flat_args[1]).ext[:__parameters][_var[i]] = ParamData(UInt64(length($(flat_args[1]).ext[:__parameters]) + 1), $_vector_scalar_get($(flat_args[end]), i))
+                end
+            else
+                $(flat_args[1]).ext[:__parameters][_var] = ParamData(UInt64(length($(flat_args[1]).ext[:__parameters]) + 1), $(flat_args[end]))
+            end
+            _var
+        end)
+    end
+end
+
