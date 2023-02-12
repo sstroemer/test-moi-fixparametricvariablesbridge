@@ -164,6 +164,7 @@ end
 JuMP.set_value(parameter::VariableRef, value::Float64; fix::Bool=true) = _set_value(parameter, value; fix=fix)
 
 macro pexpression(args...)
+    # todo: only to the wrapping if it is an AffExpr
     return esc(:($JuMP.QuadExpr.($JuMP.@expression($(args...)))))
 end
 
