@@ -1,6 +1,7 @@
 import HiGHS
 import Gurobi
-include("new_idea_5.jl")
+using JuMP
+# include("new_idea_5.jl")
 
 # ======= 1 =========
 model = JuMP.Model(HiGHS.Optimizer)
@@ -33,6 +34,7 @@ enable_parameters!(model)
 @parameter(model, p[1:2], [1.0, 1.0]; fix=false)
 @parameter(model, q, 5.0)
 
+# todo "model[:e1] is bound to the AffExpr
 e1 = @pexpression(model, [i=1:2], x[i] + 1)
 
 add_to_expression!(e1[1], x[2]*p[1])
